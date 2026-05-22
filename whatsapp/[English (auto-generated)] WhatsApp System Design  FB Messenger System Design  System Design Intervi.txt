@@ -1,0 +1,759 @@
+Hello everyone. This is another video in
+the design interview preparation series
+from code. So in this video let's talk
+about how do we design a chat
+application something like a WhatsApp or
+a Facebook messenger or any other
+messenger of that sort. Now let's look
+at some functional and non-functional
+requirement that this platform needs to
+support. Okay. So we will support a
+onetoone chat wherein a person can send
+a message to another person or a user.
+uh there would be something called a
+group chat where there could somebody
+could make a group of people and
+whenever anybody in the group sends a
+message to the group that message is
+received by everybody in the group.
+Okay. Then the messages could contain
+text it could contain images. It could
+contain videos and then it could extend
+to other kind of documents as well.
+There is something called read received
+which is basically the single tick when
+you when the message is sent, double
+tick when the message is delivered to
+the user and a blue tick when the person
+sees the message. Okay. And then we'll
+also show last scene time of a
+particular user.
+Coming to the non-functional
+requirements, this platform needs to
+have a very very low latency because for
+a chat application, it needs to look
+very realtime. So while you are sending
+a message the other person should
+immediately be able to see that message
+and obviously it should have a very high
+availability. This system should not go
+down no matter what happens. Also there
+should not be uh any lag. So in other
+videos that we have talked about in the
+past we were able to live with a lot of
+lag as well. But in this video we cannot
+have a lag because again it needs to be
+a very realtime system wherein I'm
+typing something to you and you can see
+it then and there and then respond to
+it. Right. Coming to some scale numbers,
+these are approximate numbers of
+WhatsApp. Again, I do not know if these
+are actually correct or not, but I just
+read it somewhere. So, WhatsApp has
+roughly 2 billion users out of which 1.6
+billion users access it on a monthly
+basis. These are unique users. Each day,
+WhatsApp has somewhere close to 65
+billion messages being sent across all
+the users. And that's a very big number.
+So we'll try to look at how can we
+design a system that can deliver all of
+these functional requirements with a
+very low latency and can live with these
+kind of numbers. Now numbers for
+Facebook Messenger are approximately
+similar and other chat application could
+also be running at a very same scale.
+Let's look at the overall architecture
+of the whole system. We'll first start
+with the chatting solution and then
+we'll look at other small pieces that
+surround it. Okay. Now let's start with
+the user flow. All of these things that
+you see here are basically user devices.
+Could be mobile phones, could be web
+browsers, could be variable devices like
+smartwatch and all of that. And let's
+say user one wants to send a message to
+user two. Okay. So the flow goes like
+this. User one wants to send a message
+to user two with a message ID M1.
+Okay. Now what happens is user one is
+talking to something called a websocket
+handler one. Uh now there'll be a lot of
+these websocket handlers. What this is
+is basically a websocket handler is a
+server on our back end which is keeping
+open connections with all the active
+users. Right now these are the live
+users who are having a active internet
+connection kind of a thing. Okay. Now
+all of these user are connected to some
+of the machines then there be a lot of
+these machines and all of these would be
+distributed across the globe so that
+people in certain geography talk to the
+server which are nearer to them so as to
+have a lesser latency. Now let's just
+say user one is connecting connected to
+this websocket handler one and it sends
+this message to websocket handler one
+saying send this message M1 to user U2.
+Okay. Now this web soocket handler does
+two three things when this happens. it
+talks to something called uh websocket
+manager. Okay, websocket manager is a
+repository of uh the fact that which
+device is connected to what all users.
+Now because these are probably thousands
+of devices, we need to give that
+information at some central place which
+is this websocket manager service. It
+sits on top of a radisk which stores two
+information mainly. First of all, it s
+shows that user one is connected to
+websocket handler one and websocket
+handler one is connected to user one,
+user 10, user 20 something of that sort.
+So a list of user ID that a particular
+machine is connected to that information
+gets stored in that disk. Now let's say
+a connection break between a user and a
+machine and now the user is connected to
+a different machine. So that information
+is updated into this uh websocket
+manager through this websocket manager
+into this.
+Now the second thing that websocket
+handler one does is talk to something
+called message service. Now message
+service is basically the repository of
+all the messages in the system. It will
+have API to get a message by message ID,
+get the message by user ids and various
+filters. So if you want to fetch all the
+unread messages by a particular user and
+all of that that would be powered by
+this message service and it sits on top
+of a Cassandra database. Okay. Why
+Cassandra? Because again we have these
+billions of users who will send many
+many billions of messages. So Cassandra
+is a fairly good data store to store
+that kind of a volume. Plus the query
+pattern that we have fairly aligns with
+the query pattern that Cassandra is good
+at. So that's the reason we choose a
+Cassandra here. Now there are two kinds
+of messages message services that we can
+build. Basically there are two kind of
+messaging platforms that we have. One is
+something like a Facebook which stores
+all of your messages. So in that case
+everything would be stored in a katanda
+permanently and then there's something
+like a WhatsApp which stores the
+messages only till the time it is not
+delivered to the users and once it gets
+a delivery acknowledgement then it
+deletes the message. So if we want to
+build a WhatsApp kind of a system we
+could delete the message from here also.
+Now deletes are a bit inefficient in
+Cassandra. So if you were to build a
+build that kind of a system we might
+choose some other data store as well but
+for now Cassandra would work very fine.
+Okay. So coming back to we were at
+websocket handler one which got this
+message saying U1 wants to send to U2 a
+message M1. It talked to both of these
+services and it can it would happen
+parallelly. So it can happen in any
+order. Okay. So message service would
+save the message into Cassandra and give
+the message ID. Okay. And uh let's say
+message ID is M1. And web soocket
+manager will now tell websocket handler
+one saying user U2 is connected to this
+websocket handler 2. Okay. Now do
+whatever you want to do. Now this guy
+websocket handler one will talk to
+websocket handler 2 saying that I've got
+a message for you too. I believe that
+guy is connected to you. Go send him
+that message.
+Okay. Uh now there are two three
+possibilities.
+Websocket handler 2 could actually be
+connected to that user still and he will
+send the message right or it could not
+be connected. It will say that I'm not
+connected to the user. The person has
+probably gone offline. So he'll not do
+anything and the flow ends there. Now
+let's say the web soocket handler 2
+sends this message to YouTube.
+Now there are two three things that can
+happen. The user can maybe the user is
+not using the app actively but the
+message got delivered. So this device
+will send a message to websocket handler
+2 saying that I've received the message
+or the second option could be the person
+actually open on the chat chat of this
+user U1 and could see the message then
+and there. Right? So the device would
+send a message saying I have seen the I
+have received and seen the message M1.
+Now this guy websocket handler 2 again
+query websocket manager saying that this
+message was now either delivered or
+read. I need to inform user one. So tell
+me which machine is talking to user U1.
+It'll get this particular machine's IP
+saying this guy is now handling user U1.
+And it'll send this message to websocket
+handler one saying this particular
+message ID M1 has now been read or
+received whatever and go inform the user
+and this will be informed to the user.
+Now how are these connections happening?
+So these are websocket connections which
+is basically a birectional connection.
+So there's no client and server heads
+any party can send a message. So that's
+how even server is able to send a
+message to the client. Okay. And these
+are built on top of TCP.
+Now in this whole process we queried
+websocket manager a lot of times right?
+User one calling for U2 U2 calling for
+U1 and all of that. Now at the same time
+if the user sends multiple messages
+again we'll try to do that right. So
+let's try to cache this information
+somewhere. So each machine will cache
+two kinds of things. One it will cach is
+the list of users that are connected to
+itself. So if user U2 was also connected
+to the same machine, it would have the
+data in memory. it would never have to
+call this manager. Okay. The other thing
+is uh it would temporarily for a very
+short duration of a time maybe 10 20 30
+seconds cache the information about
+conversations that it has had recently.
+So if user U2 was connected to this
+handler H2 this guy will keep it in
+cache saying user U2 is on this
+particular machine because if one sends
+another message to this U2 it now need
+not call this web soocket manager. But
+keep in mind this second cache needs to
+be stored with a very low time to live
+and it should expire every 30 odd
+seconds because remember these are
+global users. So let's say if somebody
+is connecting from Sri Lanka, you would
+probably get connected to a server in
+India. Right now that's a fairly large
+amount of distance and that comm and
+that communication might break in
+between and the person might get
+connected to a different machine the
+next time. So to kind of handle those
+things easily, we keep this cache at a
+very low TPL. Okay.
+Now there are another set of things it
+now the receipts that we have sent to
+user U1 and user U2 all those receipts
+we need to decide whether we want to
+store them or not all right so if let's
+say we want to store the read receipts
+also we can store that as a probably
+status in Cassandra in the same table
+saying this particular message has a to
+start with status as sent then it'll
+move to received then it'll move to red
+right now we can decide you can decide
+that based on your on your conversation
+with the interviewer whether you want to
+store this information or even whether
+you want to store the messages in the
+first place or not. So all of those
+things are a conversation that you need
+to have with your interviewer but you
+still need to store it for at least some
+time. So let's just say that user one
+sent a message to user U2 and then went
+offline. Now the received wouldn't go
+back right. So at least for a short
+duration of time those read receives
+need to be stored in the database and
+whenever user one comes online then
+you'll get that. Right? Now let's just
+say user one wanted to send a message to
+user three. Right? So uh second message
+user one is sending a message to user C
+which is some message M2 with some text.
+Right? Now what will happen is uh again
+it'll store in through message service.
+It will call websocket manager to get
+who is the machine which is handling
+user U3. Now user U3 is offline. Okay.
+There is no machine that is talking to
+user U3. So now websocket manager will
+return a response saying I don't have a
+machine. Right now the flow ends there.
+User this websocket handler one does not
+inform anybody because there is no
+machine talking to user U3. So the flow
+breaks there. Now when user U3 comes
+online. Now let's just say that user U3
+gets connected to this websocket handler
+3. What this webocket handler do in the
+very first place is to query message
+service and ask for are there any
+messages for user U3 that are not in
+received or read status. Okay. This
+message service will respond back and
+user UC will see all those messages.
+Right? Then when as those messages are
+being received and read those
+communications will flow back through
+the same flow like we discussed earlier.
+So then these machines will start
+talking to each other for user UC as
+well and those receipts will go on to
+other users as well. Good. Now there is
+a potential race condition here. when
+user one was sending a message for user
+U3. Assume at the exact same time user 3
+came online. Okay. Now we said these are
+parallel calls wherein a person is
+figuring out the machine who is being
+used for U3 and storing the message. Now
+let's just say that it the very first
+thing that happened was webocket manager
+returned that there is no machine that
+is talking to user U3. The next thing
+that happens was user U3 comes online
+and queries message service saying that
+get me all the messages. The third thing
+that happens is it stores into websocket
+manager that this machine 3 is handling
+user U3. Right? And the fourth thing
+that happens is this message gets stored
+into this message service. Now websocket
+handler 3 thinks that it has fetched all
+the messages for user U3 and displayed
+it on the device.
+This websocket handler one thinks that
+user 3 is offline and I have stored the
+message and done my work but
+fundamentally whatever this message M2
+was that has not received this guy right
+because before that message was was
+stored this webocket handler three
+retrieved all the messages right so
+these kind of race conditions could
+happen when you are doing parallel pulse
+but there are multiple ways to handle it
+you can either do it uh sequentially but
+that will increase the latency so I not
+recommend that what another solution you
+could possibly we do is this websocket
+handler keeps pulling the server once in
+a while saying are there any messages
+that I still missed right so for so all
+of those messages could be pulled but
+that would happen at a fairly low
+frequency and that those could be bulk
+calls something like are there any
+messages for user U1 U2 U3 to U which
+are in sent status right for all the
+active users that this machine is
+connected to and if it finds any
+messages it will send all of those
+messages as
+Now there are certain things that happen
+on the device itself. So let's say user
+one was offline and you can still send
+message onto some user chat right while
+you are offline. So let's say you want
+send another message to somebody while
+it was offline. So what would happen is
+so it will try to connect because
+internet is not there. It will not be
+able to connect to any server in that
+scenario. What will happen even in all
+other scenarios also all the messages
+would be stored in a local database
+which is persisted onto the device disk
+like let's say it's a Android
+application it could use a any kind of a
+Android database like SQLite or anything
+and store all those messages on the disk
+now whenever the device comes gets the
+internet connection it'll pull those
+messages from a Q kind of a thing or the
+database and sends those messages right
+so this is how it would be able to
+handle scenarios where the device was
+offline Okay, cool. Now we have the next
+thing as group messages. So how does
+that work? So group messages almost work
+in a very similar way. So let's say
+another scenario you wanted to send a
+message to group G1 a message called M3.
+Right now what would happen is in case
+of groups the behavior is slightly
+different. So this web soocket handler
+wouldn't take care of panning out to all
+the groups. This is a very lightweight
+service. This which just takes a message
+from a user and sends it to somebody and
+or gets a message from somebody and
+sends it to a user. It doesn't have a
+lot of logic. Okay. For group messages,
+what it'll do is it'll just send a
+message to message service saying user
+U1 wants to send a message MC to group
+G1. Uh store it and do whatever you need
+to do. So this message service will
+insert that into Cassandra saying the
+message is stored. Along with that,
+it'll also do for all the group
+messages. It'll put all of those
+messages into a Kafka topic saying
+there's a group message that I've got
+which is this user U1 sending to group
+G1 a message M3 go send it out. Okay.
+From Kafka there will be something
+called a group message handler. This is
+basically a Kafka consumer which is
+listening onto the same topic and it is
+responsible for sending out all the
+group messages. Okay. First of all, it
+does some validations that it needs to
+assuming that's out of scope for us
+saying whether a U1 is even in the group
+to be able to send it to G1. But
+assuming that's not a part of scope, it
+basically queries group service to get
+all the users that are into group G1.
+Okay, it gets a list of users. Then
+it'll remove the user U1 from that list
+and now it has a list of the users that
+are supposed to get this message. Right?
+Now it follows the exact same flow that
+was used for one to one messages but for
+all of these users. So it basically
+calls websocket manager saying give me
+all the machines that these users are
+connected with. Okay, it'll get a
+response machine one is connected to
+user U3, U4, U5, machine 2 is connected
+to some other set of users and all of
+that. Then it'll send the messages to
+individual machines saying to this user
+send this message to this user send this
+message. Right? And then the receipts
+and all will follow the exact same that
+was handled earlier. Right?
+Now the next thing what happens when
+people are uploading assets like images
+or videos or anything of that sort. So
+the very first thing that happens when
+you are trying to upload any any content
+is that there is some kind of a
+compression that happens. Now in real
+WhatsApp there's a encryption also that
+happens right at device and the
+encrypted messages are sent out and when
+the messages are received even the
+encrypted messages are received and
+they're decrypted but we'll keep that
+out of scope we'll just think of some
+compression there okay so this let's say
+U3 is sending a image to U2 right so
+what will happen is U3 is sending to U2
+some image right now this is basically
+two a two-step process. The first step
+is upload an image to a server and get
+an image ID and then send that image ID
+via the regular route to user YouTube
+and then YouTube can fetch the image.
+Right? So how the image upload works is
+again these are lightweight servers.
+They wouldn't have any logic. Okay. So
+very first thing is compression on of
+the image over here or video or
+anything. Then it'll talk to something
+called this asset service. Okay. So this
+U3 is talking to asset service through
+this load balancer. Okay. Again all the
+authentication authorization will happen
+at this layer and asset service now gets
+the whole image or video or whatever.
+Right? Asset service will use S3 as a
+data store and it'll store all the
+images there. Right now based on which
+image is getting what kind of hits on
+S3, it might decide to move some of the
+images on CDN and it could also decide
+to move replicate into multiple CDNs or
+some CDNs from where it is getting
+traffic. Okay. But assuming it has
+uploaded the image on S3 and it sends a
+response saying now let's say it is a
+image I1 right now it will come as a
+regular message to YouTube through this
+websocket handler and webock these two
+websocket handlers saying now send this
+message and the receipts will happen in
+the same way that we talked about
+earlier.
+Now there could be one optimization that
+happens. Let's say there's a political
+event or a sports event and a lot of
+people are sharing the same image for
+some reason, right? Do we need to upload
+the same image multiple times if five
+people are uploading the same image?
+Probably not. So before it even uploads
+to asset service, the first thing that
+the device will do is take a hash of
+those images and send the hash content
+to asset service. Right? Basically,
+it'll it's a way of asking do you have
+this image already or not? If you have
+it then just send it to user YouTube. If
+you don't have it then ask me and I'll
+upload it something of that sort. And of
+course when it's about hashing there
+would be various problems like duplicate
+hash outputs and collisions and all of
+that. So instead of taking one hash we
+could probably take five different hash
+algorithms and use all of them to get
+five different hashes. And if all the
+five hashes are matching against an
+image then we'll say that an image is
+already there. If it's not matching then
+we'll say that the image needs to be
+uploaded and it'll follow the regular
+route that we talked about and if it is
+already there then anyway it's there it
+just sends a message. Now let's look at
+remaining few components and and how
+they help in the whole system. So this
+is the user app which talk to all of
+these components. It could be a browser
+as well. Now the very first thing is
+something called user service. This is
+basically a service which owns the user
+profile information. uh it could be like
+name, their user ID, their profile
+picture in case of WhatsApp and some
+user preferences in case of Facebook it
+will be a larger set of data but all of
+that whatever that data is would be
+residing in a clustered MySQL for which
+runs the user database okay now all of
+those information would also be cached
+in status cluster very similar to the
+way we have implemented in other uh
+similar solutions against a key we'll be
+having the user profile information and
+a lot of other information as well okay
+now There's something called a group
+service which basically maintains all
+the group information. It basically has
+information of which group has what all
+users. Think of it as a many to many
+table with a user ID and a group ID and
+a time when user was acted and added
+into the group and maybe a status saying
+whether the user is admin or something
+of that sort. Again this information
+would be stored in the MySQL cluster uh
+which would be geographically
+distributed and it'll have multiple
+slaves through which the read queries
+will be run. Now it'll also have a
+radius sitting on top of it. So all the
+APIs like let's say get users in a group
+and something of that sort would be
+powered by this radius cluster uh and
+those APIs would be sitting within the
+group service. Now each time either user
+service or group service queries radius
+and it does not find the data is when
+they actually query one of the slaves of
+these databases fetch the information
+put it into radius and respond back to
+the whoever is calling them. Okay. And
+then group service was used in the group
+messaging workflow that we looked at
+earlier. Now each action that a user is
+taking on their app gives us a lot of
+information right. So for example, if a
+person is visiting some user's profile a
+lot of times that tells us that the
+person is interested in this user right
+it could be used for some kind of
+analytics or let's say if a particular
+person is talking a lot about sports
+that does tell us that the person is a
+sports enthusiast. Now how could we do
+that? So all events that are happening
+either there are events within the app
+or there are messages or anything of
+that sort would be sent either to this
+analytic service and then to Kafka or
+directly to Kafka in case of messages.
+Right? Now there could be a spark
+streaming consumer running on top of
+this which could do a lot of inferences.
+Right? First of all, it could do some
+message classification into some tags
+like a message is a sports kind of a
+message or a general message or a
+politics kind of a message and then try
+to classify user bases that. So that is
+one kind of analytics. Another thing
+could be just simply some information
+about what are people talking about in
+general. Now this is not possible if the
+messages are end to end encrypted. But
+if that's not the case then we should be
+easily able to infer all of that. Now
+there are two parts. One is uh doing
+some logic based on some streaming
+content that could be done by a simple
+spark streaming consumer and that
+consumer would also put that data into
+Hadoop right and then you can run a lot
+of analytics query based on adoop
+something like which are the people who
+talks about sports a lot or which are
+the people who just talk about a
+particular kind of political party or
+anything of that sort those kind of
+analytics could be run out of that Haru
+cluster.
+Now these events are also having one
+more usage. So each time a person does
+an activity on the app those events are
+listened by something called last scene
+service. Okay. Now this last scene
+service is basically the service used to
+store the last scene time of a user.
+Okay. Now the service I have made it to
+sit on top of a Cassandra database which
+has a column called user ID and a column
+called last scene time. This could also
+alternatively sit on top of a radius if
+you have finite amount of data. But
+along with last scene time if you want
+to store certain other information then
+reddis might have memory issues. So in
+that scenario you can use a Cassandra.
+You might have a doubt that when we use
+MySQL for a user information why don't
+we use a MySQL here. The reason is let's
+say a user is on the app every 5 seconds
+the app will send a notification that
+the user is late right. So every 5
+seconds for each user this will have a
+insert into the database. What that
+means is this is having an extremely
+high throughput and now MySQL might not
+be able to support that because these
+are all the rights which will go into
+the master node of my SQL. But if it's a
+Cassandra, it could be spread out easily
+across a lot of users. Now, Reddis might
+also have those update problem because
+for all the users you're doing a lot of
+inserts. So, Reddius might not be able
+to scale. But if it's a Cassandra, it
+should easily be able to scale to any
+amount of traffic, any amount of users
+and those pings coming at any frequency.
+Right? One more thing. So, there are two
+kinds of events that are spawned. One
+are the events that are spawned by the
+app and one are the events that are
+spawned by the users. So example of
+events spawned by app could be as soon
+as you turn the internet on the app
+would make a websocket connection and
+pull in some request. Now that is not a
+user activity. So that would not be
+captured as a you know activity of a
+user in the last scene service. But as
+soon as the person opens the app or
+closes the app or does anything within
+the context of an app those are actually
+the events that last scene service would
+be looking at. In general, all the
+services that we looked at, we are
+looking at here in in the other previous
+section, all of those are as usual
+horizontally scalable. So when your
+number of users or anything increases,
+you just add more number of nodes and
+that should be able to handle itself.
+Other than that, you'll obviously need
+to do a lot of monitoring alerting
+basically to ensure that you are able to
+get to your NFRs of no lag, low latency,
+and high availability. So some of the
+important things that you want to kind
+of keep a track of from a monitoring
+perspective is the CPU memory
+utilization of your services, your disk
+utilization in the databases, um your
+throughputs and latency onto your web
+services and the disk utilization in
+your Kafka and more importantly the lag
+in Kafka. So let's say if your lag
+increases you need to add more number of
+consumers. So all of those metrics you
+can capture store it into a graphana
+kind of a store and plot some graphs out
+of it and also you can build some
+alerting out of it in case your numbers
+go beyond a certain threshold you can
+send out alerts. So those alerts could
+be used to make some decisions. So for
+example if your throughput is increasing
+significantly you could add more
+machines into a particular service and
+in fact those things could be automated
+as well. So you might if you're using a
+AWS kind of a thing you might write a
+script which looks at your throughput
+and in adds more nodes or removes
+certain nodes. So all of those things
+are very important when it comes to a
+chat application because one of your
+very critical NFR is uh that it needs to
+be actually real time. If it's not real
+time then it'll give a very bad
+experience and then people will kind of
+drop out of your platform. So yeah that
+should be it about that application.
+Thanks for watching this video. If you
+have any suggestions on what videos we
+should make next or how we could improve
+this one, do let us know by commenting
+here. And don't forget to subscribe to
+this channel, like the videos, and share
+the videos with your friends while we
+keep working to get more such content to
+you. Happy learning.
